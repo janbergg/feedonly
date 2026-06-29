@@ -1,0 +1,42 @@
+build:
+  name: Unsigned iOS build
+  steps:
+    - eas/checkout
+    - eas/install_node_modules
+    - eas/resolve_build_config
+    - eas/prebuild
+    - run:
+        name: Install pods
+        working_directory: ./ios
+        command: pod install
+    - run:
+        name: Build and package unsigned IPA
+        command: |
+          set -eo pipefail
+          ROOT=$(pwd)
+          cd ios
+          WORKSPACE=$(ls -d *.xcworkspace | head -n1)
+          SCHEME="${WORKSPACE%.xcworkspace}"
+          echo "Using workspace: $WORKSPACE  scheme: $SCHEME"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+          cd build/Build/Products/Release-iphoneos
+          APP=$(ls -d *.app | head -n1)
+          echo "Packaging app: $APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qr app-unsigned.ipa Payload
+          cp app-unsigned.ipa "$ROOT/app-unsigned.ipa"
+          echo "Unsigned IPA ready"
+    - eas/upload_artifact:
+        name: Upload unsigned IPA
+        inputs:
+          path: app-unsigned.ipa

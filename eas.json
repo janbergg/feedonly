@@ -1,0 +1,25 @@
+{
+  "cli": {
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "autoIncrement": true
+    },
+    "unsigned": {
+      "ios": {
+        "config": "unsigned-ios.yml"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

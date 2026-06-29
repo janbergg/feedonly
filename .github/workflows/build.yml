@@ -1,0 +1,53 @@
+name: Build unsigned iOS IPA
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm install
+      - name: Expo prebuild (iOS)
+        run: npx expo prebuild -p ios --no-install
+      - name: Install pods
+        working-directory: ios
+        run: pod install
+      - name: Build unsigned app
+        working-directory: ios
+        run: |
+          set -eo pipefail
+          WORKSPACE=$(ls -d *.xcworkspace | head -n1)
+          SCHEME="${WORKSPACE%.xcworkspace}"
+          echo "Workspace: $WORKSPACE  Scheme: $SCHEME"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+      - name: Package IPA
+        working-directory: ios
+        run: |
+          set -eo pipefail
+          cd build/Build/Products/Release-iphoneos
+          APP=$(ls -d *.app | head -n1)
+          echo "Packaging: $APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qr app-unsigned.ipa Payload
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-unsigned-ipa
+          path: ios/build/Build/Products/Release-iphoneos/app-unsigned.ipa
+          if-no-files-found: error

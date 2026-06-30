@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { StyleSheet, ActivityIndicator, View, StatusBar } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -9,6 +9,8 @@ const USER_AGENT =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
 
+// Hides the Reels tab, blocks the Reels feed (/reels/), and evens out the
+// bottom nav. Reels everywhere else (home, profiles, DMs, posts) are untouched.
 const INJECTED = `
 (function () {
   'use strict';
@@ -36,6 +38,7 @@ const INJECTED = `
       return p === '/reels' || p === '/reels/';
     } catch (e) { return false; }
   }
+
   var _push = history.pushState;
   history.pushState = function (s, t, url) {
     if (url && blockedFeed(url)) { return; }
@@ -49,52 +52,54 @@ const INJECTED = `
   window.addEventListener('popstate', function () {
     if (blockedFeed(location.pathname)) { location.replace('/'); }
   }, true);
-  document.addEventListener('click', function (e) {
-    try {
-      var t = e.target;
-      var nearA = t.closest ? t.closest('a') : null;
-      console.log('TAP>', t.tagName,
-        '| href=', (nearA ? nearA.getAttribute('href') : 'none'),
-        '| role=', (t.getAttribute ? t.getAttribute('role') : 'none'));
-    } catch (err) { console.log('TAP> err', err.message); }
 
+  document.addEventListener('click', function (e) {
     var a = e.target.closest ? e.target.closest('a[href]') : null;
-    if (!a) { return; }
-    var href = a.getAttribute('href');
-    if (blockedFeed(href)) {
+    if (a && blockedFeed(a.getAttribute('href'))) {
       e.preventDefault();
       e.stopPropagation();
-      return;
-    }
-    if (href && href.indexOf('/reel/') === 0 && location.pathname.indexOf('/direct/') === 0) {
-      e.preventDefault();
-      e.stopPropagation();
-      location.assign(href);
     }
   }, true);
+
   if (blockedFeed(location.pathname)) { location.replace('/'); }
 
-  function onReelPage() {
-    var p = location.pathname;
-    return p.indexOf('/reel/') === 0 || p.indexOf('/reels/') === 0 || p === '/reels';
-  }
-  function inDialog(el) {
-    return el && el.closest && el.closest('[role="dialog"]');
-  }
-  window.addEventListener('touchmove', function (e) {
-    if (onReelPage() && !inDialog(e.target)) { e.preventDefault(); }
-  }, { passive: false, capture: true });
-  window.addEventListener('wheel', function (e) {
-    if (onReelPage() && !inDialog(e.target) && Math.abs(e.deltaY) > 0) {
-      e.preventDefault();
+  // Remove the empty Reels slot from the bottom nav and even out the rest.
+  function fixNav() {
+    var reel = document.querySelector('a[href="/reels/"], a[href="/reels"]');
+    if (!reel) { return; }
+    var home = document.querySelector('a[href="/"]');
+    var nav = null;
+    if (home) {
+      var anc = reel;
+      while (anc && !anc.contains(home)) { anc = anc.parentElement; }
+      nav = anc;
     }
-  }, { passive: false, capture: true });
+    if (!nav) { nav = reel.parentElement; }
+    var slot = reel;
+    while (slot.parentElement && slot.parentElement !== nav) { slot = slot.parentElement; }
+    slot.style.setProperty('display', 'none', 'important');
+    nav.style.setProperty('justify-content', 'space-around', 'important');
+  }
 
-  true;
+  var navTimer = null;
+  function scheduleFixNav() {
+    if (navTimer) { return; }
+    navTimer = setTimeout(function () { navTimer = null; fixNav(); }, 200);
+  }
+  function startObserver() {
+    if (document.body) {
+      new MutationObserver(scheduleFixNav).observe(document.body, { childList: true, subtree: true });
+      fixNav();
+    } else {
+      requestAnimationFrame(startObserver);
+    }
+  }
+  startObserver();
 })();
 true;
 `;
 
+// Backstop: block full-page loads to the Reels feed, allow everything else.
 function isBlockedUrl(url) {
   try {
     const path = new URL(url).pathname;
@@ -105,41 +110,32 @@ function isBlockedUrl(url) {
 }
 
 export default function App() {
-  const ref = useRef(null);
   return (
     <SafeAreaProvider>
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
-      <WebView
-        ref={ref}
-        source={{ uri: START_URL }}
-        userAgent={USER_AGENT}
-        injectedJavaScriptBeforeContentLoaded={INJECTED}
-        onShouldStartLoadWithRequest={(req) => {
-          const ok = !isBlockedUrl(req.url);
-          console.log('SHOULD>', ok, req.url);
-          return ok;
-        }}
-        setSupportMultipleWindows={false}
-        onNavigationStateChange={(s) => console.log('NAV>', s.url)}
-        onError={(e) => console.log('ERR>', e.nativeEvent.description, e.nativeEvent.url)}
-        onHttpError={(e) => console.log('HTTP>', e.nativeEvent.statusCode, e.nativeEvent.url)}
-        allowsBackForwardNavigationGestures
-        allowsInlineMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-        sharedCookiesEnabled
-        thirdPartyCookiesEnabled
-        domStorageEnabled
-        javaScriptEnabled
-        startInLoadingState
-        renderLoading={() => (
-          <View style={styles.loading}>
-            <ActivityIndicator size="large" color="#ffffff" />
-          </View>
-        )}
-        style={styles.webview}
-      />
-    </SafeAreaView>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" />
+        <WebView
+          source={{ uri: START_URL }}
+          userAgent={USER_AGENT}
+          injectedJavaScriptBeforeContentLoaded={INJECTED}
+          onShouldStartLoadWithRequest={(req) => !isBlockedUrl(req.url)}
+          setSupportMultipleWindows={false}
+          allowsBackForwardNavigationGestures
+          allowsInlineMediaPlayback
+          mediaPlaybackRequiresUserAction={false}
+          sharedCookiesEnabled
+          thirdPartyCookiesEnabled
+          domStorageEnabled
+          javaScriptEnabled
+          startInLoadingState
+          renderLoading={() => (
+            <View style={styles.loading}>
+              <ActivityIndicator size="large" color="#ffffff" />
+            </View>
+          )}
+          style={styles.webview}
+        />
+      </SafeAreaView>
     </SafeAreaProvider>
   );
 }

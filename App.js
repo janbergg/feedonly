@@ -9,101 +9,84 @@ const USER_AGENT =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
 
-// Hides the Reels tab, blocks the Reels feed (/reels/), and evens out the
-// bottom nav. Reels everywhere else (home, profiles, DMs, posts) are untouched.
+// GramInsta: Instagram with the Reels tab removed.
+//  - Hides the Reels button in the bottom nav and closes the gap it leaves.
+//  - Blocks the Reels feed (/reels/).
+// Reels seen anywhere else (home feed, profiles, DMs, posts) are left untouched.
 const INJECTED = `
 (function () {
   'use strict';
 
-  var css = \`
-    a[href="/reels/"],
-    a[href="/reels"] {
-      display: none !important;
-    }
-  \`;
-  function injectCSS() {
-    if (document.head) {
-      var style = document.createElement('style');
-      style.textContent = css;
-      document.head.appendChild(style);
-    } else {
-      requestAnimationFrame(injectCSS);
-    }
-  }
-  injectCSS();
-
-  function blockedFeed(url) {
+  // The Reels feed/tab is only the bare /reels/ path (a single reel is /reel/<id>/).
+  function isReelsFeed(url) {
     try {
       var p = new URL(url, location.origin).pathname;
       return p === '/reels' || p === '/reels/';
     } catch (e) { return false; }
   }
 
+  // 1. Hide the Reels tab link immediately (before the nav fix runs).
+  function injectCSS() {
+    if (!document.head) { return requestAnimationFrame(injectCSS); }
+    var style = document.createElement('style');
+    style.textContent =
+      'a[href="/reels/"], a[href="/reels"] { display: none !important; }';
+    document.head.appendChild(style);
+  }
+  injectCSS();
+
+  // 2. Block navigation into the Reels feed. Instagram is a single-page app,
+  //    so route changes go through history.pushState, not full page loads.
   var _push = history.pushState;
   history.pushState = function (s, t, url) {
-    if (url && blockedFeed(url)) { return; }
+    if (url && isReelsFeed(url)) { return; }
     return _push.apply(this, arguments);
   };
   var _replace = history.replaceState;
   history.replaceState = function (s, t, url) {
-    if (url && blockedFeed(url)) { return; }
+    if (url && isReelsFeed(url)) { return; }
     return _replace.apply(this, arguments);
   };
   window.addEventListener('popstate', function () {
-    if (blockedFeed(location.pathname)) { location.replace('/'); }
+    if (isReelsFeed(location.pathname)) { location.replace('/'); }
   }, true);
+  if (isReelsFeed(location.pathname)) { location.replace('/'); }
 
-  document.addEventListener('click', function (e) {
-    var a = e.target.closest ? e.target.closest('a[href]') : null;
-    if (a && blockedFeed(a.getAttribute('href'))) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  }, true);
-
-  if (blockedFeed(location.pathname)) { location.replace('/'); }
-
-  // Remove the empty Reels slot from the bottom nav and even out the rest.
+  // 3. Remove the empty Reels slot from the bottom nav and even out the rest.
   function fixNav() {
     var reel = document.querySelector('a[href="/reels/"], a[href="/reels"]');
     if (!reel) { return; }
     var home = document.querySelector('a[href="/"]');
-    var nav = null;
+    var nav = reel.parentElement;
     if (home) {
       var anc = reel;
       while (anc && !anc.contains(home)) { anc = anc.parentElement; }
-      nav = anc;
+      if (anc) { nav = anc; }
     }
-    if (!nav) { nav = reel.parentElement; }
     var slot = reel;
     while (slot.parentElement && slot.parentElement !== nav) { slot = slot.parentElement; }
     slot.style.setProperty('display', 'none', 'important');
     nav.style.setProperty('justify-content', 'space-around', 'important');
   }
-
   var navTimer = null;
   function scheduleFixNav() {
     if (navTimer) { return; }
     navTimer = setTimeout(function () { navTimer = null; fixNav(); }, 200);
   }
-  function startObserver() {
-    if (document.body) {
-      new MutationObserver(scheduleFixNav).observe(document.body, { childList: true, subtree: true });
-      fixNav();
-    } else {
-      requestAnimationFrame(startObserver);
-    }
-  }
-  startObserver();
+  (function startObserver() {
+    if (!document.body) { return requestAnimationFrame(startObserver); }
+    new MutationObserver(scheduleFixNav).observe(document.body, { childList: true, subtree: true });
+    fixNav();
+  })();
 })();
 true;
 `;
 
-// Backstop: block full-page loads to the Reels feed, allow everything else.
-function isBlockedUrl(url) {
+// Backstop for full-page loads: block the Reels feed, allow everything else.
+function isReelsFeed(url) {
   try {
-    const path = new URL(url).pathname;
-    return path === '/reels' || path === '/reels/';
+    const p = new URL(url).pathname;
+    return p === '/reels' || p === '/reels/';
   } catch (e) {
     return false;
   }
@@ -118,7 +101,7 @@ export default function App() {
           source={{ uri: START_URL }}
           userAgent={USER_AGENT}
           injectedJavaScriptBeforeContentLoaded={INJECTED}
-          onShouldStartLoadWithRequest={(req) => !isBlockedUrl(req.url)}
+          onShouldStartLoadWithRequest={(req) => !isReelsFeed(req.url)}
           setSupportMultipleWindows={false}
           allowsBackForwardNavigationGestures
           allowsInlineMediaPlayback

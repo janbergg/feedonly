@@ -10,12 +10,6 @@ const USER_AGENT =
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
 
 // GramInsta: Instagram without the Reels tab, Explore grid, or reel-to-reel scrolling.
-//  - Hides the Reels button in the bottom nav and closes the gap.
-//  - Blocks the Reels feed (/reels/).
-//  - On Explore, hides the grid of suggested posts but keeps search.
-//  - When a reel is showing (a /reel/ permalink or a reel opened inside a DM),
-//    locks scrolling so the "Suggested" feed can't be pulled in. Profile reels
-//    open as a static Post and aren't affected.
 const INJECTED = `
 (function () {
   'use strict';
@@ -54,6 +48,8 @@ const INJECTED = `
   if (isReelsFeed(location.pathname)) { location.replace('/'); }
 
   // 3. Remove the empty Reels slot from the bottom nav and even out the rest.
+  //    Idempotent: once hidden, the slot is marked so the poll stops touching
+  //    styles (avoids layout recalcs that stutter scrolling).
   function fixNav() {
     var reel = document.querySelector('a[href="/reels/"], a[href="/reels"]');
     if (!reel) { return; }
@@ -66,14 +62,19 @@ const INJECTED = `
     }
     var slot = reel;
     while (slot.parentElement && slot.parentElement !== nav) { slot = slot.parentElement; }
+    if (slot.getAttribute('data-gi') === '1') { return; }
     slot.style.setProperty('display', 'none', 'important');
+    slot.setAttribute('data-gi', '1');
     nav.style.setProperty('justify-content', 'space-around', 'important');
   }
 
-  // 4. On Explore (/explore/), hide the grid of suggested posts, keep search.
+  // 4. On Explore (/explore/), hide the grid of suggested posts and the loading
+  //    spinner, keep search.
   function hideExploreGrid() {
     var p = location.pathname;
     if (p !== '/explore/' && p !== '/explore') { return; }
+    var spin = document.querySelectorAll('[data-visualcompletion="loading-state"], [role="progressbar"], svg[aria-label="Loading..."]');
+    for (var k = 0; k < spin.length; k++) { spin[k].style.setProperty('display', 'none', 'important'); }
     var links = document.querySelectorAll('a[href^="/p/"], a[href^="/reel/"]');
     if (links.length < 3) { return; }
     var first = links[0], last = links[links.length - 1];
@@ -90,9 +91,9 @@ const INJECTED = `
     anc.style.setProperty('display', 'none', 'important');
   }
 
-  // 5. Lock scrolling while a reel is showing. A reel fills nearly the full
-  //    width (landscape, letterboxed) OR nearly the full height (portrait);
-  //    a video inside a chat bubble fills neither, so it won't match.
+  // 5. Lock scrolling while a reel is showing (a /reel/ permalink or a reel
+  //    opened inside a DM). A reel fills nearly the full width or full height;
+  //    a chat-bubble video fills neither, so it won't match.
   function reelOverlayShowing() {
     var vids = document.querySelectorAll('video');
     var W = window.innerWidth, H = window.innerHeight;
@@ -122,8 +123,6 @@ const INJECTED = `
       (p.indexOf('/direct/') === 0 && reelOverlayShowing());
     setLock(shouldLock);
   }
-  // Re-check the instant a touch starts, so closing a reel releases the lock
-  // immediately instead of waiting for the next poll.
   window.addEventListener('touchstart', function () {
     if (lockOn) { updateReelLock(); }
   }, { passive: true, capture: true });
@@ -159,6 +158,7 @@ export default function App() {
           injectedJavaScriptBeforeContentLoaded={INJECTED}
           onShouldStartLoadWithRequest={(req) => !isReelsFeed(req.url)}
           setSupportMultipleWindows={false}
+          decelerationRate="normal"
           allowsBackForwardNavigationGestures
           allowsInlineMediaPlayback
           mediaPlaybackRequiresUserAction={false}

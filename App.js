@@ -20,6 +20,12 @@ const INJECTED = `
       return p === '/reels' || p === '/reels/';
     } catch (e) { return false; }
   }
+  function isExploreGrid(url) {
+    try {
+      var p = new URL(url, location.origin).pathname;
+      return p === '/explore' || p === '/explore/';
+    } catch (e) { return false; }
+  }
 
   // 1. Hide the Reels tab link immediately.
   function injectCSS() {
@@ -31,21 +37,25 @@ const INJECTED = `
   }
   injectCSS();
 
-  // 2. Block navigation into the Reels feed.
+  // 2. Block the Reels feed, and send the Explore grid to the search view.
   var _push = history.pushState;
   history.pushState = function (s, t, url) {
     if (url && isReelsFeed(url)) { return; }
+    if (url && isExploreGrid(url)) { location.replace('/explore/search/'); return; }
     return _push.apply(this, arguments);
   };
   var _replace = history.replaceState;
   history.replaceState = function (s, t, url) {
     if (url && isReelsFeed(url)) { return; }
+    if (url && isExploreGrid(url)) { location.replace('/explore/search/'); return; }
     return _replace.apply(this, arguments);
   };
   window.addEventListener('popstate', function () {
-    if (isReelsFeed(location.pathname)) { location.replace('/'); }
+    if (isReelsFeed(location.pathname)) { location.replace('/'); return; }
+    if (isExploreGrid(location.pathname)) { location.replace('/explore/search/'); }
   }, true);
   if (isReelsFeed(location.pathname)) { location.replace('/'); }
+  else if (isExploreGrid(location.pathname)) { location.replace('/explore/search/'); }
 
   // 3. Remove the empty Reels slot from the bottom nav and even out the rest.
   //    Idempotent: once hidden, the slot is marked so the poll stops touching
@@ -68,30 +78,7 @@ const INJECTED = `
     nav.style.setProperty('justify-content', 'space-around', 'important');
   }
 
-  // 4. On Explore (/explore/), hide the grid of suggested posts and the loading
-  //    spinner, keep search.
-  function hideExploreGrid() {
-    var p = location.pathname;
-    if (p !== '/explore/' && p !== '/explore') { return; }
-    var spin = document.querySelectorAll('[data-visualcompletion="loading-state"], [role="progressbar"], svg[aria-label="Loading..."]');
-    for (var k = 0; k < spin.length; k++) { spin[k].style.setProperty('display', 'none', 'important'); }
-    var links = document.querySelectorAll('a[href^="/p/"], a[href^="/reel/"]');
-    if (links.length < 3) { return; }
-    var first = links[0], last = links[links.length - 1];
-    var anc = first;
-    while (anc && !anc.contains(last)) { anc = anc.parentElement; }
-    if (!anc || anc === document.body) { return; }
-    var search = document.querySelector('input, [contenteditable="true"], [role="textbox"]');
-    if (search && anc.contains(search)) {
-      var child = first;
-      while (child.parentElement && child.parentElement !== anc) { child = child.parentElement; }
-      if (child && child.contains(last) && !child.contains(search)) { anc = child; }
-      else { return; }
-    }
-    anc.style.setProperty('display', 'none', 'important');
-  }
-
-  // 5. Lock scrolling while a reel is showing (a /reel/ permalink or a reel
+  // 4. Lock scrolling while a reel is showing (a /reel/ permalink or a reel
   //    opened inside a DM). A reel fills nearly the full width or full height;
   //    a chat-bubble video fills neither, so it won't match.
   function reelOverlayShowing() {
@@ -127,8 +114,8 @@ const INJECTED = `
     if (lockOn) { updateReelLock(); }
   }, { passive: true, capture: true });
 
-  // Run all fixes on load, two quick retries, then a light 0.5s poll.
-  function apply() { fixNav(); hideExploreGrid(); updateReelLock(); }
+  // Run fixes on load, two quick retries, then a light 0.5s poll.
+  function apply() { fixNav(); updateReelLock(); }
   apply();
   setTimeout(apply, 250);
   setTimeout(apply, 700);

@@ -29,8 +29,7 @@ const INJECTED = `
   }
   syncPath();
 
-  // 1. Hide the Reels tab, and hide the Explore grid from first paint (CSS
-  //    scoped to /explore/ so it never flashes before the script removes it).
+  // 1. Hide the Reels tab, and hide the Explore grid from first paint.
   function injectCSS() {
     if (!document.head) { return requestAnimationFrame(injectCSS); }
     var style = document.createElement('style');
@@ -44,30 +43,8 @@ const INJECTED = `
   }
   injectCSS();
 
-  // 2. Block navigation into the Reels feed, and keep the path tag in sync.
-  var _push = history.pushState;
-  history.pushState = function (s, t, url) {
-    if (url && isReelsFeed(url)) { return; }
-    var r = _push.apply(this, arguments);
-    syncPath();
-    return r;
-  };
-  var _replace = history.replaceState;
-  history.replaceState = function (s, t, url) {
-    if (url && isReelsFeed(url)) { return; }
-    var r = _replace.apply(this, arguments);
-    syncPath();
-    return r;
-  };
-  window.addEventListener('popstate', function () {
-    if (isReelsFeed(location.pathname)) { location.replace('/'); return; }
-    syncPath();
-  }, true);
-  if (isReelsFeed(location.pathname)) { location.replace('/'); }
-
-  // 3. Remove the empty Reels slot from the bottom nav and even out the rest.
-  //    Idempotent: once hidden, the slot is marked so the poll stops touching
-  //    styles (avoids layout recalcs that stutter scrolling).
+  // 2. Remove the empty Reels slot from the bottom nav and even out the rest.
+  //    Idempotent: once hidden, the slot is marked so repeat calls do nothing.
   function fixNav() {
     var reel = document.querySelector('a[href="/reels/"], a[href="/reels"]');
     if (!reel) { return; }
@@ -83,8 +60,37 @@ const INJECTED = `
     if (slot.getAttribute('data-gi') === '1') { return; }
     slot.style.setProperty('display', 'none', 'important');
     slot.setAttribute('data-gi', '1');
-    nav.style.setProperty('justify-content', 'space-around', 'important');
+    if (nav) { nav.style.setProperty('justify-content', 'space-around', 'important'); }
   }
+  // Re-collapse the nav within a frame or two of a tab switch, so the empty
+  // Reels slot never lingers long enough to be seen.
+  function scheduleNavFix() {
+    requestAnimationFrame(fixNav);
+    setTimeout(fixNav, 40);
+    setTimeout(fixNav, 120);
+    setTimeout(fixNav, 300);
+  }
+
+  // 3. Block navigation into the Reels feed; keep the path tag and nav in sync.
+  var _push = history.pushState;
+  history.pushState = function (s, t, url) {
+    if (url && isReelsFeed(url)) { return; }
+    var r = _push.apply(this, arguments);
+    syncPath(); scheduleNavFix();
+    return r;
+  };
+  var _replace = history.replaceState;
+  history.replaceState = function (s, t, url) {
+    if (url && isReelsFeed(url)) { return; }
+    var r = _replace.apply(this, arguments);
+    syncPath(); scheduleNavFix();
+    return r;
+  };
+  window.addEventListener('popstate', function () {
+    if (isReelsFeed(location.pathname)) { location.replace('/'); return; }
+    syncPath(); scheduleNavFix();
+  }, true);
+  if (isReelsFeed(location.pathname)) { location.replace('/'); }
 
   // 4. On Explore (/explore/), hide the grid container and the loading spinner,
   //    keep search. (The CSS above already stops the grid images from flashing.)

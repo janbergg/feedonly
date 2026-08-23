@@ -9,15 +9,17 @@ const USER_AGENT =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
 
-// GramInsta: Instagram with the Reels tab removed.
-//  - Hides the Reels button in the bottom nav and closes the gap it leaves.
+// GramInsta: Instagram without the Reels tab, Explore grid, or reel-to-reel scrolling.
+//  - Hides the Reels button in the bottom nav and closes the gap.
 //  - Blocks the Reels feed (/reels/).
-// Reels seen anywhere else (home feed, profiles, DMs, posts) are left untouched.
+//  - On Explore, hides the grid of suggested posts but keeps search.
+//  - When a reel is showing (a /reel/ permalink or a reel opened inside a DM),
+//    locks scrolling so the "Suggested" feed can't be pulled in. Profile reels
+//    open as a static Post and aren't affected.
 const INJECTED = `
 (function () {
   'use strict';
 
-  // The Reels feed/tab is only the bare /reels/ path (a single reel is /reel/<id>/).
   function isReelsFeed(url) {
     try {
       var p = new URL(url, location.origin).pathname;
@@ -25,7 +27,7 @@ const INJECTED = `
     } catch (e) { return false; }
   }
 
-  // 1. Hide the Reels tab link immediately (before the nav fix runs).
+  // 1. Hide the Reels tab link immediately.
   function injectCSS() {
     if (!document.head) { return requestAnimationFrame(injectCSS); }
     var style = document.createElement('style');
@@ -35,8 +37,7 @@ const INJECTED = `
   }
   injectCSS();
 
-  // 2. Block navigation into the Reels feed. Instagram is a single-page app,
-  //    so route changes go through history.pushState, not full page loads.
+  // 2. Block navigation into the Reels feed.
   var _push = history.pushState;
   history.pushState = function (s, t, url) {
     if (url && isReelsFeed(url)) { return; }
@@ -68,16 +69,71 @@ const INJECTED = `
     slot.style.setProperty('display', 'none', 'important');
     nav.style.setProperty('justify-content', 'space-around', 'important');
   }
-  var navTimer = null;
-  function scheduleFixNav() {
-    if (navTimer) { return; }
-    navTimer = setTimeout(function () { navTimer = null; fixNav(); }, 200);
+
+  // 4. On Explore (/explore/), hide the grid of suggested posts, keep search.
+  function hideExploreGrid() {
+    var p = location.pathname;
+    if (p !== '/explore/' && p !== '/explore') { return; }
+    var links = document.querySelectorAll('a[href^="/p/"], a[href^="/reel/"]');
+    if (links.length < 3) { return; }
+    var first = links[0], last = links[links.length - 1];
+    var anc = first;
+    while (anc && !anc.contains(last)) { anc = anc.parentElement; }
+    if (!anc || anc === document.body) { return; }
+    var search = document.querySelector('input, [contenteditable="true"], [role="textbox"]');
+    if (search && anc.contains(search)) {
+      var child = first;
+      while (child.parentElement && child.parentElement !== anc) { child = child.parentElement; }
+      if (child && child.contains(last) && !child.contains(search)) { anc = child; }
+      else { return; }
+    }
+    anc.style.setProperty('display', 'none', 'important');
   }
-  (function startObserver() {
-    if (!document.body) { return requestAnimationFrame(startObserver); }
-    new MutationObserver(scheduleFixNav).observe(document.body, { childList: true, subtree: true });
-    fixNav();
-  })();
+
+  // 5. Lock scrolling while a reel is showing. A reel fills nearly the full
+  //    width (landscape, letterboxed) OR nearly the full height (portrait);
+  //    a video inside a chat bubble fills neither, so it won't match.
+  function reelOverlayShowing() {
+    var vids = document.querySelectorAll('video');
+    var W = window.innerWidth, H = window.innerHeight;
+    for (var i = 0; i < vids.length; i++) {
+      var r = vids[i].getBoundingClientRect();
+      if (r.width >= W * 0.85 || r.height >= H * 0.85) { return true; }
+    }
+    return false;
+  }
+  function blockScroll(e) { e.preventDefault(); }
+  var lockOn = false;
+  function setLock(on) {
+    if (on && !lockOn) {
+      window.addEventListener('touchmove', blockScroll, { passive: false, capture: true });
+      window.addEventListener('wheel', blockScroll, { passive: false, capture: true });
+      lockOn = true;
+    } else if (!on && lockOn) {
+      window.removeEventListener('touchmove', blockScroll, { capture: true });
+      window.removeEventListener('wheel', blockScroll, { capture: true });
+      lockOn = false;
+    }
+  }
+  function updateReelLock() {
+    var p = location.pathname;
+    var shouldLock =
+      (p.indexOf('/reel/') === 0) ||
+      (p.indexOf('/direct/') === 0 && reelOverlayShowing());
+    setLock(shouldLock);
+  }
+  // Re-check the instant a touch starts, so closing a reel releases the lock
+  // immediately instead of waiting for the next poll.
+  window.addEventListener('touchstart', function () {
+    if (lockOn) { updateReelLock(); }
+  }, { passive: true, capture: true });
+
+  // Run all fixes on load, two quick retries, then a light 0.5s poll.
+  function apply() { fixNav(); hideExploreGrid(); updateReelLock(); }
+  apply();
+  setTimeout(apply, 250);
+  setTimeout(apply, 700);
+  setInterval(apply, 500);
 })();
 true;
 `;
